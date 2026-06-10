@@ -414,8 +414,6 @@ class SnakeGame:
             self.draw_special_food()
             self.draw_snake()
             self.draw_ui()
-            icon = pygame.image.load('snake.ico')
-            pygame.display.set_icon(icon)
             pygame.display.flip()
             self.clock.tick(self.current_speed)
 
