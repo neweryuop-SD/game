@@ -1,358 +1,422 @@
 """
-星际防卫 - 太空射击游戏
-控制飞船左右移动，射击外星敌人，避免被击中或与敌人相撞。
+贪吃蛇·终极版 - 修复作弊模式食物跟随问题
+- 鼠标左键：重置游戏
+- 鼠标右键：切换作弊模式（无敌 + 食物仅在吃掉后重生在蛇头前方2格）
+- 回车键：暂停/继续
+- ESC键：退出
+- 方向键：移动
 """
+
 import pygame
 import random
 import sys
-from typing import List, Optional
+from pygame.locals import *
 
-# 初始化 Pygame
-pygame.init()
-pygame.mixer.init()
+# ========== 窗口设置 ==========
+WINDOW_WIDTH = 800
+WINDOW_HEIGHT = 600
+CELL_SIZE = 20
+GRID_WIDTH = WINDOW_WIDTH // CELL_SIZE   # 40
+GRID_HEIGHT = WINDOW_HEIGHT // CELL_SIZE # 30
 
-# 常量定义
-SCREEN_WIDTH = 800
-SCREEN_HEIGHT = 600
-FPS = 60
-
-# 颜色
+# ========== 配色方案 ==========
+COLOR_BG_DARK = (6, 87, 88)       # #065758
+COLOR_BG_LIGHT = (0, 153, 159)    # #00999F
+COLOR_SNAKE_BODY = (129, 210, 227) # #81D2E3
+COLOR_SNAKE_HEAD = (188, 237, 216) # #BCEDD8
+COLOR_FOOD = (254, 238, 48)       # #FEEE30
+COLOR_FOOD_GLOW = (255, 245, 150)
+COLOR_OBSTACLE = (0, 153, 159)    # #00999F
+COLOR_UI_TEXT = (188, 237, 216)   # #BCEDD8
+COLOR_CHEAT = (254, 238, 48)      # #FEEE30
+COLOR_GRID = (6, 87, 88, 80)
 BLACK = (0, 0, 0)
 WHITE = (255, 255, 255)
-GREEN = (0, 255, 0)
-RED = (255, 0, 0)
-YELLOW = (255, 255, 0)
-BLUE = (0, 0, 255)
 
-# 游戏对象速度
-PLAYER_SPEED = 6
-BULLET_SPEED = 8
-ENEMY_BASE_SPEED = 2
-ENEMY_SHOOT_COOLDOWN = 60  # 帧数间隔
+UP = (0, -1)
+DOWN = (0, 1)
+LEFT = (-1, 0)
+RIGHT = (1, 0)
 
-# 初始设定
-PLAYER_LIVES = 3
-INVINCIBLE_FRAMES = 60  # 无敌帧数
-
-
-class Player(pygame.sprite.Sprite):
-    """玩家飞船类"""
+class SnakeGame:
     def __init__(self):
-        super().__init__()
-        self.image = pygame.Surface((40, 30))
-        self.image.fill(GREEN)
-        pygame.draw.polygon(self.image, WHITE, [(20, 0), (0, 30), (40, 30)])
-        self.rect = self.image.get_rect()
-        self.rect.midbottom = (SCREEN_WIDTH // 2, SCREEN_HEIGHT - 30)
-        self.speed_x = 0
-        self.lives = PLAYER_LIVES
-        self.invincible_timer = 0
-        self.last_shot = 0
-        self.shoot_delay = 15  # 射击冷却帧数
+        pygame.init()
+        self.screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
+        pygame.display.set_caption("贪吃蛇·终极版")
+        self.clock = pygame.time.Clock()
+        self.font_large = pygame.font.SysFont('arial', 36, bold=True)
+        self.font_small = pygame.font.SysFont('arial', 24)
+        self.font_tiny = pygame.font.SysFont('arial', 18)
 
-    def update(self):
-        # 移动
-        self.rect.x += self.speed_x
-        if self.rect.left < 0:
-            self.rect.left = 0
-        if self.rect.right > SCREEN_WIDTH:
-            self.rect.right = SCREEN_WIDTH
+        self.highscore = self.load_highscore()
+        self.cheat_mode = False
 
-        # 无敌帧倒计时
-        if self.invincible_timer > 0:
-            self.invincible_timer -= 1
-            # 闪烁效果
-            if self.invincible_timer // 5 % 2:
-                self.image.set_alpha(128)
-            else:
-                self.image.set_alpha(255)
+        # 游戏状态变量
+        self.snake = []
+        self.direction = RIGHT
+        self.next_direction = RIGHT
+        self.score = 0
+        self.game_over = False
+        self.base_speed = 10
+        self.current_speed = 10
+        self.double_score = False
+        self.double_score_timer = 0
+        self.speed_boost = False
+        self.speed_boost_timer = 0
+        self.obstacles = []
+        self.food = None
+        self.special_food = None
+        self.special_food_timer = 0
+        self.next_obstacle_score = 5
+        self.paused = False
+
+        self.reset_game()
+
+    def load_highscore(self):
+        try:
+            with open("highscore.txt", "r") as f:
+                return int(f.read())
+        except:
+            return 0
+
+    def save_highscore(self):
+        with open("highscore.txt", "w") as f:
+            f.write(str(self.highscore))
+
+    def reset_game(self):
+        mid_x = GRID_WIDTH // 2
+        mid_y = GRID_HEIGHT // 2
+        self.snake = [(mid_x - 2, mid_y), (mid_x - 1, mid_y), (mid_x, mid_y)]
+        self.direction = RIGHT
+        self.next_direction = RIGHT
+        self.score = 0
+        self.game_over = False
+        self.paused = False
+        self.double_score = False
+        self.double_score_timer = 0
+        self.speed_boost = False
+        self.speed_boost_timer = 0
+        self.obstacles = []
+        self.special_food = None
+        self.special_food_timer = 0
+        self.next_obstacle_score = 5
+        self.base_speed = 10
+        self.update_speed()
+
+        if self.cheat_mode:
+            # 作弊模式：食物放在蛇头前方2格
+            self.food = self.get_forward_food_position()
         else:
-            self.image.set_alpha(255)
+            self.food = self.random_food()
 
-    def shoot(self):
-        """产生子弹"""
-        now = pygame.time.get_ticks()
-        if now - self.last_shot > self.shoot_delay:
-            self.last_shot = now
-            bullet = Bullet(self.rect.centerx, self.rect.top, direction=-1)
-            return bullet
-        return None
+    def get_forward_food_position(self):
+        """返回蛇头前方2格的位置（作弊模式专用）"""
+        if not self.snake:
+            return (GRID_WIDTH//2, GRID_HEIGHT//2)
+        head = self.snake[-1]
+        dir_x, dir_y = self.direction
+        fx = head[0] + dir_x * 2
+        fy = head[1] + dir_y * 2
+        fx = max(0, min(fx, GRID_WIDTH - 1))
+        fy = max(0, min(fy, GRID_HEIGHT - 1))
+        return (fx, fy)
 
-    def hit(self):
-        """被击中处理"""
-        if self.invincible_timer <= 0 and self.lives > 0:
-            self.lives -= 1
-            self.invincible_timer = INVINCIBLE_FRAMES
-            return True
-        return False
+    def random_food(self, avoid_positions=None):
+        if avoid_positions is None:
+            avoid_positions = []
+        avoid_set = set(self.snake) | set(self.obstacles) | set(avoid_positions)
+        if self.special_food:
+            avoid_set.add(self.special_food)
+        if len(avoid_set) >= GRID_WIDTH * GRID_HEIGHT:
+            return None
+        while True:
+            pos = (random.randint(0, GRID_WIDTH-1), random.randint(0, GRID_HEIGHT-1))
+            if pos not in avoid_set:
+                return pos
 
+    def generate_obstacle(self):
+        if self.cheat_mode:
+            return
+        pos = self.random_food()
+        if pos:
+            self.obstacles.append(pos)
 
-class Bullet(pygame.sprite.Sprite):
-    """子弹类（玩家和敌人通用）"""
-    def __init__(self, x, y, direction):
-        super().__init__()
-        self.image = pygame.Surface((5, 10))
-        self.image.fill(YELLOW)
-        self.rect = self.image.get_rect()
-        self.rect.centerx = x
-        self.rect.bottom = y
-        self.speed = BULLET_SPEED * direction  # direction: -1向上, 1向下
+    def generate_special_food(self):
+        if self.cheat_mode:
+            self.special_food = None
+            return
+        if self.special_food is None and random.random() < 0.1:
+            pos = self.random_food()
+            if pos:
+                self.special_food = pos
+                self.special_food_timer = 150
 
-    def update(self):
-        self.rect.y += self.speed
-        if self.rect.bottom < 0 or self.rect.top > SCREEN_HEIGHT:
-            self.kill()
+    def update_speed(self):
+        base = self.base_speed + len(self.snake) // 5
+        if base > 25:
+            base = 25
+        if self.speed_boost:
+            base = min(35, base + 5)
+        self.current_speed = base
 
-
-class Enemy(pygame.sprite.Sprite):
-    """敌人类"""
-    def __init__(self, x, y, speed_x=1):
-        super().__init__()
-        self.image = pygame.Surface((35, 30))
-        self.image.fill(RED)
-        pygame.draw.polygon(self.image, BLACK, [(17, 5), (5, 25), (29, 25)])
-        self.rect = self.image.get_rect()
-        self.rect.x = x
-        self.rect.y = y
-        self.speed_x = speed_x
-        self.speed_y = ENEMY_BASE_SPEED
-        self.shoot_timer = random.randint(0, ENEMY_SHOOT_COOLDOWN * 2)
-
-    def update(self):
-        self.rect.x += self.speed_x
-        self.rect.y += self.speed_y
-        # 边界反弹并下沉（经典入侵模式）
-        if self.rect.right >= SCREEN_WIDTH or self.rect.left <= 0:
-            self.speed_x = -self.speed_x
-            self.rect.y += 15  # 下沉
-            # 防止无限下沉超出边界
-            if self.rect.bottom > SCREEN_HEIGHT:
-                self.kill()
-
-    def try_shoot(self):
-        """按概率射击"""
-        self.shoot_timer -= 1
-        if self.shoot_timer <= 0:
-            self.shoot_timer = random.randint(ENEMY_SHOOT_COOLDOWN, ENEMY_SHOOT_COOLDOWN * 2)
-            bullet = Bullet(self.rect.centerx, self.rect.bottom, direction=1)
-            return bullet
-        return None
-
-
-class Star(pygame.sprite.Sprite):
-    """背景星星，动态闪烁"""
-    def __init__(self):
-        super().__init__()
-        self.image = pygame.Surface((2, 2))
-        self.image.fill(WHITE)
-        self.rect = self.image.get_rect()
-        self.rect.x = random.randint(0, SCREEN_WIDTH)
-        self.rect.y = random.randint(0, SCREEN_HEIGHT)
-        self.speed = random.uniform(0.5, 2)
-
-    def update(self):
-        self.rect.y += self.speed
-        if self.rect.top > SCREEN_HEIGHT:
-            self.rect.bottom = 0
-            self.rect.x = random.randint(0, SCREEN_WIDTH)
-
-
-def show_text(screen, text, size, x, y, color=WHITE):
-    """辅助函数：显示文字"""
-    font = pygame.font.Font(None, size)
-    text_surface = font.render(text, True, color)
-    text_rect = text_surface.get_rect(center=(x, y))
-    screen.blit(text_surface, text_rect)
-
-
-def show_game_over(screen, score, final=False):
-    """显示游戏结束画面"""
-    screen.fill(BLACK)
-    show_text(screen, "GAME OVER", 72, SCREEN_WIDTH//2, SCREEN_HEIGHT//2 - 50, RED)
-    show_text(screen, f"Final Score: {score}", 48, SCREEN_WIDTH//2, SCREEN_HEIGHT//2 + 20, WHITE)
-    show_text(screen, "Press R to Restart or Q to Quit", 32, SCREEN_WIDTH//2, SCREEN_HEIGHT//2 + 100, YELLOW)
-    pygame.display.flip()
-    waiting = True
-    while waiting:
+    def handle_events(self):
         for event in pygame.event.get():
-            if event.type == pygame.QUIT:
+            if event.type == QUIT:
+                self.save_highscore()
                 pygame.quit()
                 sys.exit()
-            if event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_r:
-                    waiting = False
-                    return True   # 重新开始
-                if event.key == pygame.K_q:
+
+            # 鼠标左键 -> 重置
+            if event.type == MOUSEBUTTONDOWN and event.button == 1:
+                self.reset_game()
+                continue
+
+            # 鼠标右键 -> 切换作弊模式
+            if event.type == MOUSEBUTTONDOWN and event.button == 3:
+                self.cheat_mode = not self.cheat_mode
+                if self.cheat_mode:
+                    # 进入作弊模式：清空障碍物和特殊食物，食物重新定位到蛇头前方
+                    self.obstacles = []
+                    self.special_food = None
+                    self.food = self.get_forward_food_position()
+                else:
+                    # 退出作弊模式：重新生成普通随机食物
+                    self.food = self.random_food()
+                self.double_score = False
+                self.speed_boost = False
+                print(f"Cheat mode: {self.cheat_mode}")
+                continue
+
+            if event.type == KEYDOWN:
+                if event.key == K_RETURN:
+                    if not self.game_over:
+                        self.paused = not self.paused
+                    continue
+                if event.key == K_ESCAPE:
+                    self.save_highscore()
                     pygame.quit()
                     sys.exit()
-    return False
 
+                if not self.game_over and not self.paused:
+                    if event.key == K_UP and self.direction != DOWN:
+                        self.next_direction = UP
+                    elif event.key == K_DOWN and self.direction != UP:
+                        self.next_direction = DOWN
+                    elif event.key == K_LEFT and self.direction != RIGHT:
+                        self.next_direction = LEFT
+                    elif event.key == K_RIGHT and self.direction != LEFT:
+                        self.next_direction = RIGHT
 
-def main():
-    screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
-    pygame.display.set_caption("星际防卫 - 太空射击")
-    clock = pygame.time.Clock()
+    def update_game(self):
+        if self.game_over or self.paused:
+            return
 
-    # 游戏变量
-    running = True
-    score = 0
-    level = 1
-    enemies_killed = 0
+        self.direction = self.next_direction
+        head = self.snake[-1]
+        new_head = (head[0] + self.direction[0], head[1] + self.direction[1])
 
-    # 精灵组
-    all_sprites = pygame.sprite.Group()
-    enemies = pygame.sprite.Group()
-    bullets = pygame.sprite.Group()
-    enemy_bullets = pygame.sprite.Group()
-    stars = pygame.sprite.Group()
+        if self.cheat_mode:
+            # 穿墙
+            new_head = (new_head[0] % GRID_WIDTH, new_head[1] % GRID_HEIGHT)
+            # 自身碰撞和障碍物碰撞在作弊模式下忽略（不死亡）
+            # 注意：自身碰撞仍然会导致游戏逻辑错乱，但为了“不会死亡”，我们可以让蛇继续移动。
+            # 不过自身重叠会奇怪，但为了作弊，可以允许。
+        else:
+            # 正常碰撞检测
+            if (new_head[0] < 0 or new_head[0] >= GRID_WIDTH or
+                new_head[1] < 0 or new_head[1] >= GRID_HEIGHT or
+                new_head in self.snake or
+                new_head in self.obstacles):
+                self.game_over = True
+                if self.score > self.highscore:
+                    self.highscore = self.score
+                    self.save_highscore()
+                return
 
-    # 创建背景星星
-    for _ in range(100):
-        star = Star()
-        stars.add(star)
-        all_sprites.add(star)
+        # 移动蛇
+        self.snake.append(new_head)
 
-    player = Player()
-    all_sprites.add(player)
+        # 判断是否吃到食物
+        ate_normal = (new_head == self.food)
+        ate_special = (self.special_food and new_head == self.special_food)
+        if self.cheat_mode:
+            ate_special = False
 
-    # 创建敌人波次
-    def create_enemy_wave():
-        nonlocal level
-        rows = 3 + level // 3
-        cols = 8
-        enemy_spacing_x = 50
-        enemy_spacing_y = 50
-        start_x = (SCREEN_WIDTH - (cols - 1) * enemy_spacing_x) // 2
-        start_y = 60
-        for row in range(rows):
-            for col in range(cols):
-                x = start_x + col * enemy_spacing_x
-                y = start_y + row * enemy_spacing_y
-                speed_x = 1 * (1 + level * 0.1)
-                enemy = Enemy(x, y, speed_x)
-                all_sprites.add(enemy)
-                enemies.add(enemy)
+        if ate_normal:
+            self.score += 1
+            if self.double_score:
+                self.score += 1
 
-    create_enemy_wave()
-
-    # 音效（简单beep模拟，无音频文件）
-    def play_beep(frequency=1000, duration=100):
-        """简易蜂鸣音效（可选）"""
-        # pygame.mixer不依赖外部文件时可用此方法，但需初始化mixer
-        # 实际使用中若无声音没关系，跳过亦可
-        pass
-
-    # 主循环
-    while running:
-        clock.tick(FPS)
-
-        # 事件处理
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                running = False
-                pygame.quit()
-                sys.exit()
-            if event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_LEFT:
-                    player.speed_x = -PLAYER_SPEED
-                if event.key == pygame.K_RIGHT:
-                    player.speed_x = PLAYER_SPEED
-                if event.key == pygame.K_SPACE:
-                    bullet = player.shoot()
-                    if bullet:
-                        bullets.add(bullet)
-                        all_sprites.add(bullet)
-            if event.type == pygame.KEYUP:
-                if event.key in (pygame.K_LEFT, pygame.K_RIGHT):
-                    player.speed_x = 0
-
-        # 更新所有精灵
-        all_sprites.update()
-        bullets.update()
-        enemy_bullets.update()
-
-        # 玩家射击冷却自动管理（已在player.shoot内使用时间）
-        # 敌人射击
-        for enemy in enemies:
-            bullet = enemy.try_shoot()
-            if bullet:
-                enemy_bullets.add(bullet)
-                all_sprites.add(bullet)
-
-        # 碰撞检测：玩家子弹 vs 敌人
-        hits = pygame.sprite.groupcollide(enemies, bullets, True, True)
-        for hit in hits:
-            score += 10
-            enemies_killed += 1
-            # 每击败5个敌人升一级，增加速度
-            if enemies_killed % 5 == 0:
-                level += 1
-                # 提高敌人整体速度
-                for e in enemies:
-                    e.speed_y = ENEMY_BASE_SPEED * (1 + level * 0.05)
-                    e.speed_x = 1 * (1 + level * 0.1)
-                    if e.speed_x > 0:
-                        e.speed_x = abs(e.speed_x)
-                    else:
-                        e.speed_x = -abs(e.speed_x)
-
-        # 玩家与敌人的碰撞
-        player_collisions = pygame.sprite.spritecollide(player, enemies, True)
-        for _ in player_collisions:
-            if player.hit():
-                # 同时移除敌人（碰撞敌人直接消灭）
-                if player.lives <= 0:
-                    if show_game_over(screen, score):
-                        # 重置游戏
-                        return main()
-                    else:
-                        running = False
-                # 闪烁无敌期间不再受伤害
+            if self.cheat_mode:
+                # 作弊模式：食物重新生成到新蛇头前方2格
+                self.food = self.get_forward_food_position()
             else:
-                # 无敌时也移除碰撞的敌人防止无限擦伤？
-                # 此处为了公平，无敌期间碰撞到敌人，敌人也会消失但玩家不扣血
-                pass
+                # 普通模式：随机生成新食物
+                self.food = self.random_food()
+                if self.score >= self.next_obstacle_score:
+                    self.generate_obstacle()
+                    self.next_obstacle_score += 5
+            self.update_speed()
+        elif ate_special:
+            self.score += 2
+            self.double_score = True
+            self.speed_boost = True
+            self.double_score_timer = 150
+            self.speed_boost_timer = 150
+            self.special_food = None
+            self.update_speed()
+            if not self.cheat_mode:
+                self.food = self.random_food()
+        else:
+            # 没吃到东西，移除尾部
+            self.snake.pop(0)
+            # 注意：作弊模式下，食物位置**不变**，等待被吃掉，绝不每帧刷新！
 
-        # 玩家与敌方子弹碰撞
-        bullet_hits = pygame.sprite.spritecollide(player, enemy_bullets, True)
-        for _ in bullet_hits:
-            if player.hit():
-                if player.lives <= 0:
-                    if show_game_over(screen, score):
-                        return main()
-                    else:
-                        running = False
+        # 特殊食物生成（仅非作弊模式）
+        if not self.cheat_mode:
+            if self.special_food is not None:
+                self.special_food_timer -= 1
+                if self.special_food_timer <= 0:
+                    self.special_food = None
+            self.generate_special_food()
+        else:
+            self.special_food = None
 
-        # 检查是否有敌人超出底部边界（游戏结束）
-        for enemy in enemies:
-            if enemy.rect.bottom >= SCREEN_HEIGHT - 30:
-                # 敌人到达底部，游戏失败
-                if show_game_over(screen, score):
-                    return main()
+        # 双倍分/加速计时
+        if self.double_score:
+            self.double_score_timer -= 1
+            if self.double_score_timer <= 0:
+                self.double_score = False
+        if self.speed_boost:
+            self.speed_boost_timer -= 1
+            if self.speed_boost_timer <= 0:
+                self.speed_boost = False
+                self.update_speed()
+
+    # ========== 绘制函数（配色美化，与前相同） ==========
+    def draw_background(self):
+        for y in range(WINDOW_HEIGHT):
+            ratio = y / WINDOW_HEIGHT
+            r = int(COLOR_BG_DARK[0] * (1 - ratio) + COLOR_BG_LIGHT[0] * ratio)
+            g = int(COLOR_BG_DARK[1] * (1 - ratio) + COLOR_BG_LIGHT[1] * ratio)
+            b = int(COLOR_BG_DARK[2] * (1 - ratio) + COLOR_BG_LIGHT[2] * ratio)
+            pygame.draw.line(self.screen, (r, g, b), (0, y), (WINDOW_WIDTH, y))
+
+    def draw_grid(self):
+        for x in range(0, WINDOW_WIDTH, CELL_SIZE):
+            pygame.draw.line(self.screen, (*COLOR_GRID[:3], 60), (x, 0), (x, WINDOW_HEIGHT))
+        for y in range(0, WINDOW_HEIGHT, CELL_SIZE):
+            pygame.draw.line(self.screen, (*COLOR_GRID[:3], 60), (0, y), (WINDOW_WIDTH, y))
+
+    def draw_rounded_rect(self, surface, color, rect, radius=5):
+        pygame.draw.rect(surface, color, rect, border_radius=radius)
+
+    def draw_snake(self):
+        for i, seg in enumerate(self.snake):
+            rect = pygame.Rect(seg[0]*CELL_SIZE, seg[1]*CELL_SIZE, CELL_SIZE, CELL_SIZE)
+            color = COLOR_SNAKE_BODY if i < len(self.snake)-1 else COLOR_SNAKE_HEAD
+            shadow_rect = rect.move(2, 2)
+            self.draw_rounded_rect(self.screen, BLACK, shadow_rect, radius=6)
+            self.draw_rounded_rect(self.screen, color, rect, radius=6)
+            if i == len(self.snake)-1:
+                eye_size = 3
+                eye_offset = 5
+                if self.direction == RIGHT:
+                    pos1 = (rect.right - eye_offset, rect.top + eye_offset)
+                    pos2 = (rect.right - eye_offset, rect.bottom - eye_offset)
+                elif self.direction == LEFT:
+                    pos1 = (rect.left + eye_offset - eye_size, rect.top + eye_offset)
+                    pos2 = (rect.left + eye_offset - eye_size, rect.bottom - eye_offset)
+                elif self.direction == UP:
+                    pos1 = (rect.left + eye_offset, rect.top + eye_offset)
+                    pos2 = (rect.right - eye_offset - eye_size, rect.top + eye_offset)
                 else:
-                    running = False
+                    pos1 = (rect.left + eye_offset, rect.bottom - eye_offset - eye_size)
+                    pos2 = (rect.right - eye_offset - eye_size, rect.bottom - eye_offset - eye_size)
+                pygame.draw.circle(self.screen, WHITE, pos1, eye_size)
+                pygame.draw.circle(self.screen, WHITE, pos2, eye_size)
 
-        # 若所有敌人被消灭，生成新一波
-        if len(enemies) == 0:
-            level += 1
-            create_enemy_wave()
-            # 提高敌人基础速度
-            for e in enemies:
-                e.speed_y = ENEMY_BASE_SPEED * (1 + level * 0.05)
+    def draw_food(self):
+        if self.food is None:
+            return
+        center = (self.food[0]*CELL_SIZE + CELL_SIZE//2, self.food[1]*CELL_SIZE + CELL_SIZE//2)
+        pygame.draw.circle(self.screen, COLOR_FOOD, center, CELL_SIZE//2 - 2)
+        pygame.draw.circle(self.screen, COLOR_FOOD_GLOW, center, CELL_SIZE//3)
+        glow = pygame.Surface((CELL_SIZE+10, CELL_SIZE+10), pygame.SRCALPHA)
+        pygame.draw.circle(glow, (*COLOR_FOOD, 80), (CELL_SIZE//2+5, CELL_SIZE//2+5), CELL_SIZE//2+3)
+        self.screen.blit(glow, (self.food[0]*CELL_SIZE-5, self.food[1]*CELL_SIZE-5))
 
-        # 绘制
-        screen.fill(BLACK)
-        all_sprites.draw(screen)
-        # 显示UI
-        show_text(screen, f"Score: {score}", 32, 70, 20, WHITE)
-        show_text(screen, f"Lives: {player.lives}", 32, 120, 55, GREEN)
-        show_text(screen, f"Level: {level}", 32, SCREEN_WIDTH - 80, 20, YELLOW)
+    def draw_special_food(self):
+        if self.special_food and not self.cheat_mode:
+            rect = pygame.Rect(self.special_food[0]*CELL_SIZE, self.special_food[1]*CELL_SIZE, CELL_SIZE, CELL_SIZE)
+            self.draw_rounded_rect(self.screen, (254, 238, 48), rect, radius=8)
+            flash = pygame.Surface((CELL_SIZE, CELL_SIZE), pygame.SRCALPHA)
+            flash.fill((255, 255, 150, 100))
+            self.screen.blit(flash, rect)
 
-        pygame.display.flip()
+    def draw_obstacles(self):
+        if self.cheat_mode:
+            return
+        for obs in self.obstacles:
+            rect = pygame.Rect(obs[0]*CELL_SIZE, obs[1]*CELL_SIZE, CELL_SIZE, CELL_SIZE)
+            self.draw_rounded_rect(self.screen, COLOR_OBSTACLE, rect, radius=4)
+            pygame.draw.line(self.screen, BLACK, rect.topleft, rect.bottomright, 2)
+            pygame.draw.line(self.screen, BLACK, rect.topright, rect.bottomleft, 2)
 
-    pygame.quit()
-    sys.exit()
+    def draw_ui(self):
+        score_text = self.font_large.render(f"Score: {self.score}", True, COLOR_UI_TEXT)
+        score_shadow = self.font_large.render(f"Score: {self.score}", True, BLACK)
+        self.screen.blit(score_shadow, (12, 12))
+        self.screen.blit(score_text, (10, 10))
 
+        high_text = self.font_small.render(f"Best: {self.highscore}", True, COLOR_FOOD)
+        self.screen.blit(high_text, (10, 55))
+
+        if self.cheat_mode:
+            cheat_surf = self.font_small.render("CHEAT MODE ON", True, COLOR_CHEAT)
+            self.screen.blit(cheat_surf, (WINDOW_WIDTH - 180, 10))
+
+        y_off = 90
+        if self.double_score:
+            db_text = self.font_tiny.render("DOUBLE SCORE!", True, COLOR_FOOD)
+            self.screen.blit(db_text, (10, y_off))
+            y_off += 25
+        if self.speed_boost:
+            sp_text = self.font_tiny.render("SPEED UP!", True, (0, 255, 200))
+            self.screen.blit(sp_text, (10, y_off))
+
+        tip1 = self.font_tiny.render("L-click: Reset   R-click: Cheat   Enter: Pause   Esc: Quit", True, COLOR_UI_TEXT)
+        self.screen.blit(tip1, (WINDOW_WIDTH - 460, 10))
+        tip2 = self.font_tiny.render("Arrow keys: Move", True, COLOR_UI_TEXT)
+        self.screen.blit(tip2, (WINDOW_WIDTH - 220, 35))
+
+        if self.paused and not self.game_over:
+            pause_surf = self.font_large.render("PAUSED", True, COLOR_FOOD)
+            rect = pause_surf.get_rect(center=(WINDOW_WIDTH//2, WINDOW_HEIGHT//2))
+            self.screen.blit(pause_surf, rect)
+
+        if self.game_over:
+            go_surf = self.font_large.render("GAME OVER", True, COLOR_FOOD)
+            go_rect = go_surf.get_rect(center=(WINDOW_WIDTH//2, WINDOW_HEIGHT//2 - 40))
+            self.screen.blit(go_surf, go_rect)
+            restart_surf = self.font_small.render("Left click to restart", True, COLOR_UI_TEXT)
+            restart_rect = restart_surf.get_rect(center=(WINDOW_WIDTH//2, WINDOW_HEIGHT//2 + 20))
+            self.screen.blit(restart_surf, restart_rect)
+
+    def run(self):
+        while True:
+            self.handle_events()
+            self.update_game()
+            self.draw_background()
+            self.draw_grid()
+            self.draw_obstacles()
+            self.draw_food()
+            self.draw_special_food()
+            self.draw_snake()
+            self.draw_ui()
+            pygame.display.flip()
+            self.clock.tick(self.current_speed)
 
 if __name__ == "__main__":
-    main()
+    game = SnakeGame()
+    game.run()
